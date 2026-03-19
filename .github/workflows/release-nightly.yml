@@ -1,0 +1,106 @@
+name: Weekly dnSpyEx Nightly Build
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # 每周日凌晨运行
+  workflow_dispatch:    # 支持手动触发测试
+
+jobs:
+  build:
+    name: Build & Release
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        # 这里只保留你最常用的两个版本，减轻构建负担
+        platform: [net-x86, net-x64]
+        include:
+          - platform: net-x86
+            package-name: net-win32
+            build-dir: net10.0-windows\win-x86\publish
+          - platform: net-x64
+            package-name: net-win64
+            build-dir: net10.0-windows\win-x64\publish
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      # 1. 准备环境
+      - name: Get Version Info
+        id: info
+        run: |
+          $v = Get-Date -Format "yyyy.01.dd" # 遵循你要求的 2026.03.19 格式
+          $sha = (Invoke-RestMethod -Uri "https://api.github.com/repos/dnSpyEx/dnSpy/commits/master").sha.Substring(0, 7)
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          echo "commit=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Checkout dnSpyEx Source
+        uses: actions/checkout@v4
+        with:
+          repository: dnSpyEx/dnSpy
+          path: source
+          submodules: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      # 2. 编译并打包
+      - name: Build (${{ matrix.platform }})
+        run: |
+          cd source
+          .\build.ps1 ${{ matrix.platform }}
+
+      - name: Prepare Artifact
+        id: package
+        run: |
+          $src = "source\dnSpy\dnSpy\bin\Release\${{ matrix.build-dir }}"
+          $zipName = "dnSpyEx-${{ matrix.platform }}.zip"
+          Compress-Archive -Path "$src\*" -DestinationPath $zipName
+          $hash = (Get-FileHash $zipName).Hash
+          echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          echo "hash=$hash" >> $env:GITHUB_OUTPUT
+
+      # 3. 发布到当前仓库的 Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.info.outputs.version }}
+          name: "dnSpyEx Nightly ${{ steps.info.outputs.version }} (${{ steps.info.outputs.commit }})"
+          files: ${{ steps.package.outputs.zip_name }}
+          body: "Automated weekly build from upstream master."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 4. 跨仓库更新你的 Scoop Bucket (仅在 x64 构建时执行一次即可)
+      - name: Update External Scoop Bucket
+        if: matrix.platform == 'net-x64'
+        env:
+          PUSH_TOKEN: ${{ secrets.MY_SCOOP_TOKEN }}
+        run: |
+          # 克隆你的 Bucket 仓库
+          git clone https://x-access-token:${env:PUSH_TOKEN}@github.com/你的用户名/你的Scoop仓库名.git bucket_repo
+          
+          $manifestPath = "bucket_repo/bucket/dnspyex.json"
+          $json = Get-Content $manifestPath | ConvertFrom-Json
+          
+          # 更新版本号
+          $json.version = "${{ steps.info.outputs.version }}"
+          
+          # 更新 URL 和 Hash (这里演示更新 64bit，你可以按需扩展)
+          $json.architecture.'64bit'.url = "https://github.com/${{ github.repository }}/releases/download/${{ steps.info.outputs.version }}/dnSpyEx-net-x64.zip"
+          $json.architecture.'64bit'.hash = "${{ steps.package.outputs.hash }}"
+          
+          $json | ConvertTo-Json -Depth 20 | Out-File $manifestPath -Encoding utf8
+          
+          cd bucket_repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Update dnSpyEx to ${{ steps.info.outputs.version }}"
+          git push
