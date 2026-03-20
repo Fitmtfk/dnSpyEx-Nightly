@@ -87,29 +87,38 @@ jobs:
           
   publish-release:
     name: Create Unified Release
-    needs: [build-dnspy, build-mcp] # 确保前两个任务都成功才执行
+    needs: [build-dnspy, build-mcp]
     runs-on: ubuntu-latest
     steps:
       - name: Get Version Info
         id: info
-        shell: pwsh 
+        shell: pwsh
         run: |
           $v = Get-Date -Format "yyyy.MM.dd"
           echo "version=$v" >> $env:GITHUB_OUTPUT
+
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
-          path: all-assets
-          merge-multiple: true # 将所有下载的文件放在同一个目录下
+          path: ./artifacts 
+
+      - name: Prepare Files for Release
+        shell: bash
+        run: |
+          # 创建一个纯净的文件夹用来放所有要发布的 zip
+          mkdir ./release-assets
+          # 关键：递归查找所有子目录下的 zip 文件并拷贝到一个文件夹
+          find ./artifacts -name "*.zip" -exec cp {} ./release-assets/ \;
+          ls -R ./release-assets # 打印一下确认文件都在
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.info.outputs.version }}
           name: "dnSpyEx Nightly Toolbox ${{ steps.info.outputs.version }}"
-          files: "all-assets/*.zip"
+          # 指向刚才准备好的文件夹
+          files: "release-assets/*.zip" 
           body: |
             ## .NET Reverse Engineering Toolbox
             - **dnSpyEx**: Latest build from master (net-x64/x86)
             - **dnSpy-MCP-Server**: For AI-assisted reverse engineering
-            
-            *Build Date: ${{ steps.info.outputs.version }}*
