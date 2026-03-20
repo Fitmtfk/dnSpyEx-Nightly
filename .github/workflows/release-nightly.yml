@@ -92,8 +92,10 @@ jobs:
     steps:
       - name: Get Version Info
         id: info
+        shell: pwsh 
         run: |
-          echo "version=Get-Date -Format "yyyy.01.dd"" >> $GITHUB_OUTPUT
+          $v = Get-Date -Format "yyyy.MM.dd"
+          echo "version=$v" >> $env:GITHUB_OUTPUT
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
