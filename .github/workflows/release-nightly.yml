@@ -6,8 +6,8 @@ on:
   workflow_dispatch:    # 支持手动触发测试
 
 jobs:
-  build:
-    name: Build & Release
+  build-dnspy:
+    name: Build dnSpyEx
     runs-on: windows-latest
     strategy:
       matrix:
@@ -27,13 +27,6 @@ jobs:
 
     steps:
       # 1. 准备环境
-      - name: Get Version Info
-        id: info
-        run: |
-          $v = Get-Date -Format "yyyy.01.dd" # 遵循你要求的 2026.03.19 格式
-          $sha = (Invoke-RestMethod -Uri "https://api.github.com/repos/dnSpyEx/dnSpy/commits/master").sha.Substring(0, 7)
-          echo "version=$v" >> $env:GITHUB_OUTPUT
-          echo "commit=$sha" >> $env:GITHUB_OUTPUT
 
       - name: Checkout dnSpyEx Source
         uses: actions/checkout@v4
@@ -65,14 +58,57 @@ jobs:
           $hash = (Get-FileHash $zipName).Hash
           echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
           echo "hash=$hash" >> $env:GITHUB_OUTPUT
-
-      # 3. 发布到当前仓库的 Release
+          
+  build-mcp:
+    name: Build MCP Server
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout MCP Source
+        uses: actions/checkout@v4
+        with:
+          repository: soufianetahiri/dnspy-mcp
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Publish
+        run: dotnet publish src/DnSpyMcpServer/DnSpyMcpServer.csproj -c Release -p:PublishProfile=win-x64
+      - name: Package
+        run: |
+          $publishDir = "src/DnSpyMcpServer/bin/Release/net8.0/win-x64/publish"
+          Compress-Archive -Path "$publishDir\*" -DestinationPath "dnSpy-MCP-win-x64.zip"
+      - name: Upload Temp Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dnSpy-MCP
+          path: dnSpy-MCP-win-x64.zip
+          
+  publish-release:
+    name: Create Unified Release
+    needs: [build-dnspy, build-mcp] # 确保前两个任务都成功才执行
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Version Info
+        id: info
+        run: |
+          echo "version=Get-Date -Format "yyyy.01.dd"" >> $GITHUB_OUTPUT
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-assets
+          merge-multiple: true # 将所有下载的文件放在同一个目录下
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.info.outputs.version }}
-          name: "dnSpyEx Nightly ${{ steps.info.outputs.version }} (${{ steps.info.outputs.commit }})"
-          files: ${{ steps.package.outputs.zip_name }}
-          body: "Automated weekly build from upstream master."
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: "dnSpyEx Nightly Toolbox ${{ steps.info.outputs.version }}"
+          files: "all-assets/*.zip"
+          body: |
+            ## .NET Reverse Engineering Toolbox
+            - **dnSpyEx**: Latest build from master (net-x64/x86)
+            - **dnSpy-MCP-Server**: For AI-assisted reverse engineering
+            
+            *Build Date: ${{ steps.info.outputs.version }}*
