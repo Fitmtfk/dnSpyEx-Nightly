@@ -58,7 +58,11 @@ jobs:
           $hash = (Get-FileHash $zipName).Hash
           echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
           echo "hash=$hash" >> $env:GITHUB_OUTPUT
-          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dnSpyEx-${{ matrix.platform }}
+          path: dnSpyEx-${{ matrix.platform }}.zip
   build-mcp:
     name: Build MCP Server
     runs-on: windows-latest
